@@ -18,11 +18,14 @@ getopt
   'r|readme'  => \my $readme,
   't|test'    => \my $test,
   'u|update'  => \my $update;
+ getopt ['--config', 'config.yml'],
+  'f|config=s'=> \my $cfile;
 
 die color_error 'Usage: ' . extract_usage
   unless $all || $build || $commit || $publish || $readme || $test || $update;
 
-my $config = Load path('config.yml')->slurp;
+my $config = &load_config($cfile);
+exit;
 for my $build (keys $config->{releases}->%*) {
   my $release = $config->{releases}{$build};
 
@@ -333,6 +336,13 @@ sub _has_stages ($release) {
 
 sub _now {
   return strftime('%Y-%m-%dT%H:%M:%SZ', gmtime);
+}
+
+sub _load_config {
+    my $cfile = shift;
+    print $cfile;
+    return;
+    return Load path($cfile)->slurp;
 }
 
 =head1 SYNOPSIS
