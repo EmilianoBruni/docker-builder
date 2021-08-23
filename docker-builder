@@ -5,10 +5,13 @@ use Print::Colored ':all';
 use Mojo::File 'path';
 use Mojo::Template;
 use Mojo::Util qw|decode encode extract_usage getopt|;
+use Mojolicious::Plugin::Config;
 use POSIX 'strftime';
 use YAML::XS;
 
 chdir $ARGV[0] if $ARGV[0];
+
+my $cfile = 'config.yml';
 
 getopt
   'a|all'     => \my $all,
@@ -17,15 +20,14 @@ getopt
   'p|publish' => \my $publish,
   'r|readme'  => \my $readme,
   't|test'    => \my $test,
-  'u|update'  => \my $update;
- getopt ['--config', 'config.yml'],
-  'f|config=s'=> \my $cfile;
+  'u|update'  => \my $update,
+  'e|erase'   => \my $erase,
+  'f|config=s'=> \$cfile;
 
 die color_error 'Usage: ' . extract_usage
-  unless $all || $build || $commit || $publish || $readme || $test || $update;
+  unless $all || $build || $commit || $publish || $readme || $test || $update || $erase;
 
-my $config = &load_config($cfile);
-exit;
+my $config = &_load_config($cfile);
 for my $build (keys $config->{releases}->%*) {
   my $release = $config->{releases}{$build};
 
@@ -49,6 +51,15 @@ build($config)   if $build   || $all;
 test($config)    if $test    || $all;
 commit($config)  if $commit  || $all;
 publish($config) if $publish || $all;
+erase($config)   if $erase;
+
+sub erase ($config) {
+  for my $build (sort keys $config->{releases}->%*) {
+      unlink "$build/Dockerfile";
+      rmdir $build;
+      say "Deleted $build";
+  }
+}
 
 # build images
 
@@ -68,13 +79,12 @@ sub build ($config) {
     if (_has_stages($release)) {
       for my $stage (_all_stages($release, 1)) {
         my $version = _first_version($release, $stage);
-        say <<~"...";
+        say qq{
           #
           # $image
           #
           # building image: $build $stage $version
-          #
-          ...
+          #} =~ s/^ {10}//mgr;
 
         my @cmd = qw|docker image build|;
         push @cmd, '--build-arg', 'NOW=' . _now();
@@ -88,13 +98,13 @@ sub build ($config) {
       }
     } else {
       my $version = _first_version($release);
-      say <<~"...";
+      say qq{
         #
         # $image
         #
         # building image: $build $version
-        #
-        ...
+        #} =~ s/^ {8}//mgr;
+
 
       my @cmd = qw|docker image build|;
       push @cmd, '--build-arg', 'NOW=' . _now();
@@ -123,13 +133,12 @@ sub commit ($config) {
 sub publish ($config) {
   my $image = $config->{docker}{image};
 
-  say <<~"...";
+  say qq{
     #
     # $image:
     #
     # publish to Github
-    #
-    ...
+    #} =~ s/^ {4}//mgr;
 
   my @cmd = qw|git push|;
   system(@cmd) == 0 or die color_error $!;
@@ -146,13 +155,12 @@ sub publish ($config) {
     if (_has_stages($release)) {
       for my $stage (_all_stages($release, 1)) {
         my $version = _first_version($release, $stage);
-        say <<~"...";
+        say qq{
           #
           # $image
           #
           # publishing image: $build $stage $version
-          #
-          ...
+          #} =~ s/^ {10}//mgr;
 
         for (_all_versions($release, $stage)) {
           system(@cmd, "$image:$_") == 0 or die color_error $!;
@@ -160,13 +168,12 @@ sub publish ($config) {
       }
     } else {
       my $version = _first_version($release);
-      say <<~"...";
+      say qq{
         #
         # $image
         #
         # publishing image: $build $version
-        #
-        ...
+        #} =~ s/^ {8}//mgr;
 
       for (_all_versions($release)) {
         system(@cmd, "$image:$_") == 0 or die color_error $!;
@@ -190,11 +197,10 @@ sub publish ($config) {
 
 sub readme ($config) {
   system('qdbus org.kde.klipper /klipper setClipboardContents "$(cat README.md)"') == 0 or die color_error 'Klipper not available!';
-  say <<~"...";
+  say qq{
     #
     # README copied to Klipper
-    #
-    ...
+    #} =~ s/^ {4}//mgr;
 }
 
 # test
@@ -219,13 +225,12 @@ sub test ($config) {
 sub update ($config) {
   my $mt        = Mojo::Template->new;
   my @templates = $config->{templates}->@*;
-  chomp(my $warning = <<~'...');
+  my $warning = qq{
     #
     # this file is generated via docker-builder/generate.pl
     #
     # do not edit it directly
-    #
-    ...
+    #} =~ s/^ {4}//mgr;
   my $html_warning
     = '<!-- this file is generated via docker-builder/generate.pl, do not edit it directly -->';
 
@@ -261,10 +266,11 @@ sub update ($config) {
 
     $add_label->(source        => $release->{dockerfile}{url});
     $add_label->(url           => $config->{git}{repo});
-    $add_label->(documentation => "$config->{git}{repo}/blob/master/README.md");
+    $add_label->(documentation => "$config->{git}{repo}/blob/master/README.pod");
 
     my $target = path($build)->make_path;
     %args = (
+      docker       => $config->{docker},
       from         => $from,
       global       => $config->{global},
       labels       => join("\n", sort @labels),
@@ -294,8 +300,8 @@ sub update ($config) {
     warning => $html_warning
   );
   $args{from} = $config->{docker}{from} if $config->{docker}{from};
-  $rendered = $mt->vars(1)->render_file('templates/readme.ep', \%args);
-  path('README.md')->spurt(encode 'UTF-8', $rendered);
+  # $rendered = $mt->vars(1)->render_file('templates/readme.ep', \%args);
+  # path('README.md')->spurt(encode 'UTF-8', $rendered);
 }
 
 # internal functions
@@ -340,9 +346,12 @@ sub _now {
 
 sub _load_config {
     my $cfile = shift;
-    print $cfile;
-    return;
-    return Load path($cfile)->slurp;
+    if ($cfile =~ /\.yml$/) {
+        return Load path($cfile)->slurp;
+    } elsif ($cfile =~ /\.cfg$/) {
+        return Mojolicious::Plugin::Config->load($cfile);
+    }
+
 }
 
 =head1 SYNOPSIS
