@@ -22,6 +22,7 @@ getopt
   't|test'     => \my $test,
   'u|update'   => \my $update,
   'e|erase'    => \my $erase,
+  '--no-cache' => \my $no_cache,
   'f|config=s' => \$cfile;
 
 die color_error 'Usage: ' . extract_usage
@@ -73,6 +74,7 @@ sub erase ($config) {
 sub build ($config) {
     my $image = $config->{docker}{image};
 
+
     my %pulled;
 
     for my $build ( sort keys $config->{releases}->%* ) {
@@ -94,6 +96,7 @@ sub build ($config) {
           #} =~ s/^ {10}//mgr;
 
                 my @cmd = qw|docker image build|;
+                push @cmd, '--no-cache' if ($no_cache);
                 push @cmd, '--build-arg', 'NOW=' . _now();
                 push @cmd, '--target',    $stage;
                 for ( $release->{versions}{$stage}->@* ) {
@@ -114,6 +117,7 @@ sub build ($config) {
         #} =~ s/^ {8}//mgr;
 
             my @cmd = qw|docker image build|;
+            push @cmd, '--no-cache' if ($no_cache);
             push @cmd, '--build-arg', 'NOW=' . _now();
             for ( $release->{versions}->@* ) {
                 push @cmd, '--tag', "$image:$_";
