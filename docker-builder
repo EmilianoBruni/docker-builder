@@ -315,7 +315,7 @@ sub update ($config) {
                 ->render_file( "templates/$template->{source}", \%args );
 
             $target->child( $template->{target} )
-                ->spurt( encode 'UTF-8', $rendered );
+                ->spew( encode 'UTF-8', $rendered );
         }
     }
 
@@ -331,7 +331,7 @@ sub update ($config) {
     if ( -e 'templates/readme.ep' ) {
         $rendered
             = $mt->vars(1)->render_file( 'templates/readme.ep', \%args );
-        path('README.md')->spurt( encode 'UTF-8', $rendered );
+        path('README.md')->spew( encode 'UTF-8', $rendered );
     }
 }
 
